@@ -18,7 +18,7 @@ nailgun = { path = "../nailgun" }
 nix = "0.23"
 options = { path = "../options" }
 sha2 = "0.9"
-strum = "0.20"
+strum = "0.23"
 strum_macros = "0.23"
 sysinfo = "0.20.0"
 tokio = { version = "1.4", features = ["rt-multi-thread", "macros", "net", "io-std", "io-util"] }
