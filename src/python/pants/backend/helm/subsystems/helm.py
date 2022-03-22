@@ -64,16 +64,6 @@ classic_repositories_help = softwrap(
     """
 )
 
-from pants.option.option_types import (
-    BoolOption,
-    DictOption,
-    ShellStrListOption,
-    StrListOption,
-    StrOption,
-    WorkspacePathOption,
-)
-
-
 class HelmSubsystem(TemplatedExternalTool):
     options_scope = "helm"
     help = "The Helm command line (https://helm.sh)"
