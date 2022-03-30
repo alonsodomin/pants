@@ -159,11 +159,10 @@ checksum = "904dfeac50f3cdaba28fc6f57fdcddb75f49ed61346676a78c4ffe55877802fd"
 
 [[package]]
 name = "bincode"
-version = "1.3.1"
+version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f30d3a39baa26f9651f17b375061f3233dde33424a8b72b0dbe93a68a0bc896d"
+checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
 dependencies = [
- "byteorder",
  "serde",
 ]
 
@@ -204,7 +203,7 @@ dependencies = [
  "task_executor",
  "tempfile",
  "testutil",
- "time 0.3.7",
+ "time 0.3.9",
  "tokio",
  "tokio-stream",
  "workunit_store",
@@ -721,9 +720,9 @@ dependencies = [
  "task_executor",
  "tempfile",
  "testutil",
- "time 0.3.7",
+ "time 0.3.9",
  "tokio",
- "tokio-util",
+ "tokio-util 0.7.1",
  "tryfuture",
  "ui",
  "url",
@@ -733,12 +732,12 @@ dependencies = [
 
 [[package]]
 name = "env_logger"
-version = "0.5.13"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15b0a4d2e39f8420210be8b27eeda28029729e2fd4291019455016c348240c38"
+checksum = "0b2cf0344971ee6c64c31be0d530793fba457d322dfec2810c453d0ef228f9c3"
 dependencies = [
  "atty",
- "humantime 1.3.0",
+ "humantime",
  "log",
  "regex",
  "termcolor",
@@ -921,9 +920,9 @@ checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 
 [[package]]
 name = "fuser"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac1f2a705ca76e625e44d60c387365fc29866ff5a065b464b4258ec331eae710"
+checksum = "aef8400a4ea1d18a8302e2952f5137a9a21ab257825ccc7d67db4a8018b89022"
 dependencies = [
  "libc",
  "log",
@@ -1120,7 +1119,7 @@ dependencies = [
  "rustls-pemfile",
  "tokio",
  "tokio-rustls 0.22.0",
- "tokio-util",
+ "tokio-util 0.6.9",
  "tonic",
  "tonic-build",
  "tower",
@@ -1144,7 +1143,7 @@ dependencies = [
  "indexmap",
  "slab",
  "tokio",
- "tokio-util",
+ "tokio-util 0.6.9",
  "tracing",
 ]
 
@@ -1257,24 +1256,15 @@ checksum = "6456b8a6c8f33fee7d958fcd1b60d55b11940a79e63ae87013e6d22e26034440"
 
 [[package]]
 name = "humantime"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df004cfca50ef23c36850aaaa59ad52cc70d0e90243c3c7737a4dd32dc7a3c4f"
-dependencies = [
- "quick-error",
-]
-
-[[package]]
-name = "humantime"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a3a5bfb195931eeb336b2a7b4d761daec841b97f947d34394601737a7bba5e4"
 
 [[package]]
 name = "hyper"
-version = "0.14.17"
+version = "0.14.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "043f0e083e9901b6cc658a77d1eb86f4fc650bbb977a4337dd63192826aa85dd"
+checksum = "b26ae0a80afebe130861d90abf98e3814a4f28a4c6ffeb5ab8ebb2be311e0ef2"
 dependencies = [
  "bytes",
  "futures-channel",
@@ -1304,7 +1294,7 @@ dependencies = [
  "hyper",
  "rustls 0.20.2",
  "tokio",
- "tokio-rustls 0.23.2",
+ "tokio-rustls 0.23.3",
 ]
 
 [[package]]
@@ -1757,7 +1747,7 @@ dependencies = [
  "futures",
  "log",
  "tokio",
- "tokio-util",
+ "tokio-util 0.6.9",
 ]
 
 [[package]]
@@ -1984,9 +1974,9 @@ dependencies = [
 
 [[package]]
 name = "os_pipe"
-version = "1.0.0"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e3492ebca331b895fe23ed427dce2013d9b2e00c45964f12040b0db38b8ab27"
+checksum = "2c92f2b54f081d635c77e7120862d48db8e91f7f21cef23ab1b4fe9971c59f55"
 dependencies = [
  "libc",
  "winapi 0.3.9",
@@ -2280,8 +2270,8 @@ dependencies = [
  "tempfile",
  "testutil",
  "tokio",
- "tokio-rustls 0.23.2",
- "tokio-util",
+ "tokio-rustls 0.23.3",
+ "tokio-util 0.7.1",
  "tonic",
  "tryfuture",
  "uname",
@@ -2320,7 +2310,7 @@ source = "git+https://github.com/stuhood/prodash?rev=stuhood/raw-messages-draft#
 dependencies = [
  "crosstermion",
  "dashmap",
- "humantime 2.1.0",
+ "humantime",
  "parking_lot 0.11.2",
  "unicode-width",
  "vte",
@@ -2403,9 +2393,9 @@ dependencies = [
 
 [[package]]
 name = "pyo3"
-version = "0.16.0"
+version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d1a3df45cb95bd954fac00bd9609062640fd7fb9e9946a660092c9e015421fb"
+checksum = "a378727d5fdcaafd15b5afe9842cff1c25fdc43f62a162ffda2263c57ad98703"
 dependencies = [
  "cfg-if 1.0.0",
  "indoc",
@@ -2419,18 +2409,18 @@ dependencies = [
 
 [[package]]
 name = "pyo3-build-config"
-version = "0.16.1"
+version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f61cb87bf5c9503fa0e7f38bcd311b31993328a5e29f3507dfbf763c8ccd37f4"
+checksum = "4fbb27a3e96edd34c13d97d0feefccc90a79270c577c66e19d95af8323823dfc"
 dependencies = [
  "once_cell",
 ]
 
 [[package]]
 name = "pyo3-ffi"
-version = "0.16.0"
+version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9a4e2f74dc77eea5ce11d19f0afaeb632b6590f8cbb1d5ee2f1330b766803e8"
+checksum = "7b719fff844bcf3f911132112ec06527eb195f6a98e0c42cf97e1118929fd4ea"
 dependencies = [
  "libc",
  "pyo3-build-config",
@@ -2438,9 +2428,9 @@ dependencies = [
 
 [[package]]
 name = "pyo3-macros"
-version = "0.16.0"
+version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbff3a1579934968a53bcc78ac33663ed2577accda05d484097679cc8d28e52d"
+checksum = "f795e52d3320abb349ca28b501a7112154a87f353fae1c811deecd58e99cfa9b"
 dependencies = [
  "proc-macro2",
  "pyo3-macros-backend",
@@ -2450,21 +2440,15 @@ dependencies = [
 
 [[package]]
 name = "pyo3-macros-backend"
-version = "0.16.0"
+version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90644126c8c1ac7b47f794dd20a5729f8646b91c49edb31689c90f8cb3c33ea9"
+checksum = "39e03aa57a3bb7b96982958088df38302a139df4eef54671bc595f26556cb75b"
 dependencies = [
  "proc-macro2",
  "pyo3-build-config",
  "quote",
  "syn",
 ]
-
-[[package]]
-name = "quick-error"
-version = "1.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
 
 [[package]]
 name = "quote"
@@ -2665,8 +2649,8 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "tokio",
- "tokio-rustls 0.23.2",
- "tokio-util",
+ "tokio-rustls 0.23.3",
+ "tokio-util 0.6.9",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -2692,11 +2676,10 @@ dependencies = [
 
 [[package]]
 name = "rlimit"
-version = "0.3.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6d26e65e82a1e2628c5f209ec12f4508fa50e644bd2f264138e60129d61eae8"
+checksum = "347703a5ae47adf1e693144157be231dde38c72bd485925cae7407ad3e52480b"
 dependencies = [
- "cfg-if 0.1.10",
  "libc",
 ]
 
@@ -3071,7 +3054,7 @@ dependencies = [
  "tempfile",
  "testutil",
  "tokio",
- "tokio-rustls 0.23.2",
+ "tokio-rustls 0.23.3",
  "tonic",
  "tower-service",
  "tryfuture",
@@ -3118,9 +3101,9 @@ dependencies = [
 
 [[package]]
 name = "strum"
-version = "0.20.0"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7318c509b5ba57f18533982607f24070a55d353e90d4cae30c467cdb2ad5ac5c"
+checksum = "e96acfc1b70604b8b2f1ffa4c57e59176c7dbb05d556c71ecd2f5498a1dee7f8"
 
 [[package]]
 name = "strum_macros"
@@ -3300,9 +3283,9 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.3.7"
+version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "004cbc98f30fa233c61a38bc77e96a9106e65c88f2d3bef182ae952027e5753d"
+checksum = "c2702e08a7a860f005826c6815dcac101b19b5eb330c27fe4a5928fec1d20ddd"
 dependencies = [
  "libc",
  "num_threads",
@@ -3386,9 +3369,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-rustls"
-version = "0.23.2"
+version = "0.23.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a27d5f2b839802bd8267fa19b0530f5a08b9c08cd417976be2a65d130fe1c11b"
+checksum = "4151fda0cf2798550ad0b34bcfc9b9dcc2a9d2471c895c68f3a8818e54f2389e"
 dependencies = [
  "rustls 0.20.2",
  "tokio",
@@ -3418,6 +3401,20 @@ dependencies = [
  "log",
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "tokio-util"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0edfdeb067411dba2044da6d1cb2df793dd35add7888d73c16e3381ded401764"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "futures-sink",
+ "pin-project-lite",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3454,7 +3451,7 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.22.0",
  "tokio-stream",
- "tokio-util",
+ "tokio-util 0.6.9",
  "tower",
  "tower-layer",
  "tower-service",
@@ -3488,7 +3485,7 @@ dependencies = [
  "slab",
  "tokio",
  "tokio-stream",
- "tokio-util",
+ "tokio-util 0.6.9",
  "tower-layer",
  "tower-service",
  "tracing",
@@ -3980,6 +3977,7 @@ dependencies = [
  "bytes",
  "concrete_time",
  "deepsize",
+ "futures",
  "hashing",
  "hdrhistogram",
  "internment",
@@ -3987,6 +3985,7 @@ dependencies = [
  "parking_lot 0.12.0",
  "petgraph",
  "rand 0.8.5",
+ "smallvec",
  "strum",
  "strum_macros",
  "tokio",
@@ -4004,9 +4003,9 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.5.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e59ec1d2457bd6c0dd89b50e7d9d6b0b647809bf3f0a59ac85557046950b7b2"
+checksum = "332f188cc1bcf1fe1064b8c58d150f497e697f49774aa846f2dc949d9a25f236"
 dependencies = [
  "byteorder",
  "zerocopy-derive",
