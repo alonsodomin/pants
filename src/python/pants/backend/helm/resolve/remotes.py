@@ -64,6 +64,16 @@ class HelmRegistry(HelmRemote):
         if not self.address.startswith(OCI_REGISTRY_PROTOCOL):
             raise InvalidHelmRegistryAddress(self.alias, self.address)
 
+    def repository_ref(self, repository: str | None) -> str:
+        repo_path = (repository or "").strip("/")
+        return f"{self.address}/{repo_path}"
+
+    def package_ref(self, artifact_name: str, *, repository: str | None) -> str:
+        repo_ref = self.repository_ref(repository)
+        if not repo_ref.endswith("/"):
+            repo_ref += "/"
+        return f"{repo_ref}{artifact_name}"
+
 
 @dataclass(frozen=True)
 class HelmClassicRepository(HelmRemote):
