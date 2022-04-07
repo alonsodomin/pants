@@ -64,6 +64,7 @@ classic_repositories_help = softwrap(
     """
 )
 
+
 class HelmSubsystem(TemplatedExternalTool):
     options_scope = "helm"
     help = "The Helm command line (https://helm.sh)"
