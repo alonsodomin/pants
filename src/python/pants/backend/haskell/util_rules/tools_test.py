@@ -12,14 +12,16 @@ from pants.testutil.rule_runner import PYTHON_BOOTSTRAP_ENV, QueryRule, RuleRunn
 
 @pytest.fixture
 def rule_runner() -> RuleRunner:
-    return RuleRunner(rules=[*tool_rules(), QueryRule(GhcBinary, ()), QueryRule(CabalBinary, ())])
+    rule_runner = RuleRunner(
+        rules=[*tool_rules(), QueryRule(GhcBinary, ()), QueryRule(CabalBinary, ())]
+    )
+    rule_runner.set_options([], env_inherit=PYTHON_BOOTSTRAP_ENV)
+    return rule_runner
 
 
 def test_find_tools(rule_runner: RuleRunner) -> None:
-    rule_runner.set_options([], env_inherit=PYTHON_BOOTSTRAP_ENV)
-
     ghc = rule_runner.request(GhcBinary, [])
-    assert ghc.path
+    assert ghc.binary_path.path
 
     cabal = rule_runner.request(CabalBinary, [])
-    assert cabal.path
+    assert cabal.binary_path.path
