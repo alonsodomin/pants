@@ -4,11 +4,15 @@
 from __future__ import annotations
 
 import os
+import re
+from abc import ABCMeta
 from dataclasses import dataclass
+from itertools import chain
 from pathlib import Path
-from typing import Iterable
+from typing import ClassVar, Iterable, Tuple, Type, TypeVar
 
 from pants.core.util_rules.system_binaries import (
+    BinaryNotFoundError,
     BinaryPath,
     BinaryPathRequest,
     BinaryPaths,
@@ -16,25 +20,78 @@ from pants.core.util_rules.system_binaries import (
     SearchPath,
 )
 from pants.engine.environment import Environment, EnvironmentRequest
-from pants.engine.rules import Get, collect_rules, rule
-from pants.option.option_types import StrListOption
+from pants.engine.process import Process, ProcessCacheScope, ProcessResult
+from pants.engine.rules import Get, MultiGet, collect_rules, rule
+from pants.option.option_types import StrListOption, StrOption
 from pants.option.subsystem import Subsystem
+from pants.util.logging import LogLevel
 from pants.util.memo import memoized_method
+from pants.util.strutil import bullet_list, softwrap
 
 DEFAULT_SEARCH_PATH = ["<GHCUP>", "<PATH>"]
 
 
-class HaskellSubsystem(Subsystem):
-    options_scope = "haskell"
-    help = "Haskell"
+@dataclass(frozen=True)
+class HaskellToolRequest:
+    tool_name: str
+    minimum_version: str
+    search_path: SearchPath
+    test_args: tuple[str, ...]
+    test_version_pattern: str
+
+
+class HaskellToolBase(Subsystem, metaclass=ABCMeta):
+    default_minimum_version: ClassVar[str]
+    default_test_version_pattern: ClassVar[str] = "version (\\d+\\.\\d+(\\.\\d+)*)"
+    default_test_args: ClassVar[Tuple[str, ...]] = ("--version",)
+    default_search_paths: ClassVar[Tuple[str, ...]] = tuple(DEFAULT_SEARCH_PATH)
 
     _search_paths = StrListOption(
-        "--search-paths", default=DEFAULT_SEARCH_PATH, help="Search path for Haskell tools."
+        "--search-paths",
+        default=lambda cls: list(cls.default_search_paths),
+        help=lambda cls: f"Search path for Haskell `{cls.options_scope}` tool.",
+    )
+
+    minimum_version = StrOption(
+        "--minimum-expected-version",
+        default=lambda cls: cls.default_minimum_version,
+        help=lambda cls: softwrap(
+            f"""
+            The minimum version for Haskell `{cls.options_scope}` tool discovered by Pants must support.
+
+            For example, if you set `'{cls.default_minimum_version}'`, then Pants will look for a {cls.options_scope} binary that is {cls.default_minimum_version}+,
+            e.g. 1.17 or 1.18.
+
+            You should still set the Go version for each module in your `go.mod` with the `go`
+            directive.
+
+            Do not include the patch version.
+            """
+        ),
+    )
+    test_args = StrListOption(
+        "--test-args",
+        default=lambda cls: list(cls.default_test_args),
+        help=lambda cls: f"Arguments to use during discovery of the Haskell {cls.options_scope} tool.",
+    )
+    test_version_pattern = StrOption(
+        "--test-version-pattern",
+        default=lambda cls: cls.default_test_version_pattern,
+        help=lambda cls: f"Regular expression to be used to determine the version of the Haskell {cls.options_scope} tool.",
     )
 
     @memoized_method
     def search_paths(self, env: Environment) -> tuple[str, ...]:
         return tuple(_expand_search_paths(self._search_paths, env))
+
+    def get_request(self, env: Environment) -> HaskellToolRequest:
+        return HaskellToolRequest(
+            tool_name=self.options_scope,
+            minimum_version=self.minimum_version,
+            search_path=SearchPath(self.search_paths(env)),
+            test_args=self.test_args,
+            test_version_pattern=self.test_version_pattern,
+        )
 
 
 def _expand_search_paths(search_paths: Iterable[str], env: Environment) -> list[str]:
@@ -88,53 +145,131 @@ def get_ghcup_root(env: Environment) -> str | None:
     return None
 
 
-class GhcBinary(BinaryPath):
-    """The Glasgow Haskell Compiler (GHC) tool."""
-
-
-class CabalBinary(BinaryPath):
-    """The Cabal build tool."""
+_HaskellBinary = TypeVar("_HaskellBinary", bound="HaskellBinary")
 
 
 @dataclass(frozen=True)
-class HaskellToolRequest:
-    name: str
-    test_args: tuple[str, ...]
-    rationale: str
+class _HaskellToolPath:
+    binary_path: BinaryPath
+    version: str
+
+
+@dataclass(frozen=True)
+class HaskellBinary(metaclass=ABCMeta):
+    _internal_path: _HaskellToolPath
+
+    @classmethod
+    def from_haskell_path(cls: Type[_HaskellBinary], path: _HaskellToolPath) -> _HaskellBinary:
+        return cls(_internal_path=path)
+
+    @property
+    def binary_path(self) -> BinaryPath:
+        return self._internal_path.binary_path
+
+    @property
+    def version(self) -> str:
+        return self._internal_path.version
+
+
+class GhcBinary(HaskellBinary):
+    """The Glasgow Haskell Compiler (GHC) tool."""
+
+
+class GhcSubsystem(HaskellToolBase):
+    options_scope = "ghc"
+    help = "The Glasglow Haskell compiler"
+
+    default_minimum_version = "8.10"
+
+
+class CabalBinary(HaskellBinary):
+    """The Cabal build tool."""
+
+
+class CabalSubsystem(HaskellToolBase):
+    options_scope = "cabal"
+    help = "The Haskell Cabal tool"
+
+    default_minimum_version = "3.6"
 
 
 @rule
-async def find_haskell_tool(req: HaskellToolRequest, subsytem: HaskellSubsystem) -> BinaryPath:
-    env = await Get(Environment, EnvironmentRequest(["HOME", "PATH"]))
+async def find_haskell_tool(req: HaskellToolRequest) -> _HaskellToolPath:
     request = BinaryPathRequest(
-        binary_name=req.name,
-        search_path=SearchPath(subsytem.search_paths(env)),
+        binary_name=req.tool_name,
+        search_path=req.search_path,
         test=BinaryPathTest(args=req.test_args),
     )
-    paths = await Get(BinaryPaths, BinaryPathRequest, request)
-    return paths.first_path_or_raise(request, rationale=req.rationale)
+    found_paths = await Get(BinaryPaths, BinaryPathRequest, request)
+
+    test_version_results = await MultiGet(
+        Get(
+            ProcessResult,
+            Process(
+                [bin_path.path, *req.test_args],
+                description=f"Determine version of Haskell tool {bin_path.path}",
+                level=LogLevel.DEBUG,
+                cache_scope=ProcessCacheScope.PER_RESTART_SUCCESSFUL,
+            ),
+        )
+        for bin_path in found_paths.paths
+    )
+
+    def parse_version(v: str) -> tuple[int, int]:
+        major, minor = v.split(".", maxsplit=1)
+        return int(major), int(minor)
+
+    invalid_versions = []
+    for bin_path, version_result in zip(found_paths.paths, test_version_results):
+        version_regex = re.compile(req.test_version_pattern)
+        matched_version = list(
+            chain.from_iterable(version_regex.findall(version_result.stdout.decode("utf-8")))
+        )
+        matched_version_components = matched_version[0].split(".")
+
+        found_version = f"{matched_version_components[0]}.{matched_version_components[1]}"
+
+        is_compatible = (found_version == req.minimum_version) or (
+            parse_version(req.minimum_version) <= parse_version(found_version)
+        )
+        if is_compatible:
+            return _HaskellToolPath(binary_path=bin_path, version=found_version)
+
+        invalid_versions.append((bin_path.path, found_version))
+
+    invalid_versions_str = bullet_list(
+        f"{path}: {version}" for path, version in sorted(invalid_versions)
+    )
+    raise BinaryNotFoundError(
+        softwrap(
+            f"""
+            Cannot find a `{req.tool_name}` binary compatible with the minimum version of
+            {req.minimum_version} (set by `[{req.tool_name}].minimum_expected_version`).
+
+            Found these `{req.tool_name}` binaries but they have incompatible versions:
+
+            {invalid_versions_str}
+
+            To fix, please install the expected version or newer (https://golang.org/doc/install)
+            and ensure that it is discoverable via the option `[{req.tool_name}].search_paths`, or change
+            `[{req.tool_name}].expected_minimum_version`.
+            """
+        )
+    )
 
 
 @rule
-async def find_ghc() -> GhcBinary:
-    first_path = await Get(
-        BinaryPath,
-        HaskellToolRequest(
-            name="ghc", test_args=("--version",), rationale="find a valid version for GHC"
-        ),
-    )
-    return GhcBinary(first_path.path, first_path.fingerprint)
+async def find_ghc(subsystem: GhcSubsystem) -> GhcBinary:
+    env = await Get(Environment, EnvironmentRequest(["HOME", "PATH"]))
+    bin_path = await Get(_HaskellToolPath, HaskellToolRequest, subsystem.get_request(env))
+    return GhcBinary.from_haskell_path(bin_path)
 
 
 @rule
-async def find_cabal() -> CabalBinary:
-    first_path = await Get(
-        BinaryPath,
-        HaskellToolRequest(
-            name="cabal", test_args=("--version",), rationale="find a valid version for Cabal"
-        ),
-    )
-    return CabalBinary(first_path.path, first_path.fingerprint)
+async def find_cabal(subsystem: CabalSubsystem) -> CabalBinary:
+    env = await Get(Environment, EnvironmentRequest(["HOME", "PATH"]))
+    bin_path = await Get(_HaskellToolPath, HaskellToolRequest, subsystem.get_request(env))
+    return CabalBinary.from_haskell_path(bin_path)
 
 
 def rules():
