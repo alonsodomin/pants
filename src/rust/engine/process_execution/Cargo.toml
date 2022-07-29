@@ -6,8 +6,7 @@ authors = [ "Pants Build <pantsbuild@gmail.com>" ]
 publish = false
 
 [dependencies]
-# Pin async-trait due to https://github.com/dtolnay/async-trait/issues/144.
-async-trait = "=0.1.42"
+async-trait = "0.1"
 async-lock = "2.5"
 walkdir = "2"
 protos = { path = "../protos" }
@@ -44,7 +43,7 @@ serde = "1.0.136"
 bincode = "1.3.3"
 async-oncecell = "0.2"
 rand = "0.8"
-prost = "0.9"
+prost = "0.10"
 prost-types = "0.9"
 strum = "0.24"
 strum_macros = "0.24"
