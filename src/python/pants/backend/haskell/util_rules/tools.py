@@ -19,11 +19,12 @@ from pants.core.util_rules.system_binaries import (
     BinaryPathTest,
     SearchPath,
 )
-from pants.engine.environment import Environment, EnvironmentRequest
+from pants.engine.env_vars import EnvironmentVars, EnvironmentVarsRequest
 from pants.engine.process import Process, ProcessCacheScope, ProcessResult
 from pants.engine.rules import Get, MultiGet, collect_rules, rule
 from pants.option.option_types import StrListOption, StrOption
 from pants.option.subsystem import Subsystem
+from pants.util.frozendict import FrozenDict
 from pants.util.logging import LogLevel
 from pants.util.memo import memoized_method
 from pants.util.strutil import bullet_list, softwrap
@@ -35,7 +36,7 @@ DEFAULT_SEARCH_PATH = ["<GHCUP>", "<PATH>"]
 class HaskellToolRequest:
     tool_name: str
     minimum_version: str
-    search_path: SearchPath
+    search_path: tuple[str, ...]
     test_args: tuple[str, ...]
     test_version_pattern: str
 
@@ -46,7 +47,7 @@ class HaskellToolBase(Subsystem, metaclass=ABCMeta):
     default_test_args: ClassVar[Tuple[str, ...]] = ("--version",)
     default_search_paths: ClassVar[Tuple[str, ...]] = tuple(DEFAULT_SEARCH_PATH)
 
-    _search_paths = StrListOption(
+    search_paths = StrListOption(
         "--search-paths",
         default=lambda cls: list(cls.default_search_paths),
         help=lambda cls: f"Search path for Haskell `{cls.options_scope}` tool.",
@@ -81,20 +82,17 @@ class HaskellToolBase(Subsystem, metaclass=ABCMeta):
     )
 
     @memoized_method
-    def search_paths(self, env: Environment) -> tuple[str, ...]:
-        return tuple(_expand_search_paths(self._search_paths, env))
-
-    def get_request(self, env: Environment) -> HaskellToolRequest:
+    def to_request(self) -> HaskellToolRequest:
         return HaskellToolRequest(
             tool_name=self.options_scope,
             minimum_version=self.minimum_version,
-            search_path=SearchPath(self.search_paths(env)),
+            search_path=self.search_paths,
             test_args=self.test_args,
             test_version_pattern=self.test_version_pattern,
         )
 
 
-def _expand_search_paths(search_paths: Iterable[str], env: Environment) -> list[str]:
+def _expand_search_paths(search_paths: Iterable[str], env: EnvironmentVars) -> list[str]:
     special_strings = {
         "<PATH>": lambda: get_environment_paths(env),
         "<GHCUP>": lambda: get_ghcup_paths(env),
@@ -111,7 +109,7 @@ def _expand_search_paths(search_paths: Iterable[str], env: Environment) -> list[
     return expanded
 
 
-def get_environment_paths(env: Environment) -> list[str]:
+def get_environment_paths(env: EnvironmentVars) -> list[str]:
     """Returns a list of paths specified by the PATH env var."""
     pathstr = env.get("PATH")
     if pathstr:
@@ -119,7 +117,7 @@ def get_environment_paths(env: Environment) -> list[str]:
     return []
 
 
-def get_ghcup_paths(env: Environment) -> list[str]:
+def get_ghcup_paths(env: EnvironmentVars) -> list[str]:
     """Returns a list of paths to Haskell tools managed by ghcup."""
     ghcup_root = get_ghcup_root(env)
     if not ghcup_root:
@@ -137,7 +135,7 @@ def get_ghcup_paths(env: Environment) -> list[str]:
     return paths
 
 
-def get_ghcup_root(env: Environment) -> str | None:
+def get_ghcup_root(env: EnvironmentVars) -> str | None:
     """See https://www.haskell.org/ghcup/install/#manual-install."""
     home_from_env = env.get("HOME")
     if home_from_env:
@@ -152,6 +150,7 @@ _HaskellBinary = TypeVar("_HaskellBinary", bound="HaskellBinary")
 class _HaskellToolPath:
     binary_path: BinaryPath
     version: str
+    env: FrozenDict[str, str]
 
 
 @dataclass(frozen=True)
@@ -169,6 +168,10 @@ class HaskellBinary(metaclass=ABCMeta):
     @property
     def version(self) -> str:
         return self._internal_path.version
+
+    @property
+    def env(self) -> FrozenDict[str, str]:
+        return self._internal_path.env
 
 
 class GhcBinary(HaskellBinary):
@@ -195,9 +198,10 @@ class CabalSubsystem(HaskellToolBase):
 
 @rule
 async def find_haskell_tool(req: HaskellToolRequest) -> _HaskellToolPath:
+    env_vars = await Get(EnvironmentVars, EnvironmentVarsRequest(["HOME", "PATH"]))
     request = BinaryPathRequest(
         binary_name=req.tool_name,
-        search_path=req.search_path,
+        search_path=SearchPath(_expand_search_paths(req.search_path, env_vars)),
         test=BinaryPathTest(args=req.test_args),
     )
     found_paths = await Get(BinaryPaths, BinaryPathRequest, request)
@@ -233,7 +237,7 @@ async def find_haskell_tool(req: HaskellToolRequest) -> _HaskellToolPath:
             parse_version(req.minimum_version) <= parse_version(found_version)
         )
         if is_compatible:
-            return _HaskellToolPath(binary_path=bin_path, version=found_version)
+            return _HaskellToolPath(binary_path=bin_path, version=found_version, env=env_vars)
 
         invalid_versions.append((bin_path.path, found_version))
 
@@ -260,15 +264,13 @@ async def find_haskell_tool(req: HaskellToolRequest) -> _HaskellToolPath:
 
 @rule
 async def find_ghc(subsystem: GhcSubsystem) -> GhcBinary:
-    env = await Get(Environment, EnvironmentRequest(["HOME", "PATH"]))
-    bin_path = await Get(_HaskellToolPath, HaskellToolRequest, subsystem.get_request(env))
+    bin_path = await Get(_HaskellToolPath, HaskellToolRequest, subsystem.to_request())
     return GhcBinary.from_haskell_path(bin_path)
 
 
 @rule
 async def find_cabal(subsystem: CabalSubsystem) -> CabalBinary:
-    env = await Get(Environment, EnvironmentRequest(["HOME", "PATH"]))
-    bin_path = await Get(_HaskellToolPath, HaskellToolRequest, subsystem.get_request(env))
+    bin_path = await Get(_HaskellToolPath, HaskellToolRequest, subsystem.to_request())
     return CabalBinary.from_haskell_path(bin_path)
 
 
