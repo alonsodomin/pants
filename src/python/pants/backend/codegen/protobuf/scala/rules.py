@@ -189,6 +189,7 @@ async def generate_scala_from_protobuf(
             input_digest=input_digest,
             extra_immutable_input_digests=extra_immutable_input_digests,
             extra_nailgun_keys=extra_immutable_input_digests,
+            extra_jvm_options=scalapb.jvm_options,
             description=f"Generating Scala sources from {request.protocol_target.address}.",
             level=LogLevel.DEBUG,
             output_directories=(output_dir,),
@@ -259,7 +260,7 @@ async def setup_scalapb_shim_classfiles() -> ScalaPBShimBinary:
         ClasspathEntry,
         CompileJvmWrappedBinaryRequest,
         CompileJvmWrappedBinaryRequest.for_scala_sources(
-            tool_name="scalapb_shim",
+            name="scalapb_shim",
             sources=source_digest,
             lockfile_request=lockfile_request,
             scala_version=SHIM_SCALA_VERSION,

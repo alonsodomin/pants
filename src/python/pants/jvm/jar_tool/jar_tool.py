@@ -217,7 +217,7 @@ async def build_jar_tool() -> JarToolBinary:
         ClasspathEntry,
         CompileJvmWrappedBinaryRequest,
         CompileJvmWrappedBinaryRequest.for_java_sources(
-            tool_name="jar_tool", sources=sources_digest, lockfile_request=lockfile_request
+            name="jar_tool", sources=sources_digest, lockfile_request=lockfile_request
         ),
     )
     return JarToolBinary(classpath_entry)

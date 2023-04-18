@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar
 
 from pants.base.glob_match_error_behavior import GlobMatchErrorBehavior
 from pants.engine.fs import (
@@ -30,7 +29,7 @@ from pants.util.logging import LogLevel
 
 @dataclass(frozen=True)
 class CompileJvmWrappedBinaryRequest:
-    tool_name: str
+    name: str
     sources: Digest
     accepted_file_extensions: tuple[str, ...]
     lockfile_request: GenerateJvmLockfileFromTool
@@ -39,10 +38,10 @@ class CompileJvmWrappedBinaryRequest:
 
     @classmethod
     def for_java_sources(
-        cls, *, tool_name: str, sources: Digest, lockfile_request: GenerateJvmLockfileFromTool
+        cls, *, name: str, sources: Digest, lockfile_request: GenerateJvmLockfileFromTool
     ) -> CompileJvmWrappedBinaryRequest:
         return cls(
-            tool_name=tool_name,
+            name=name,
             sources=sources,
             accepted_file_extensions=(".java",),
             lockfile_request=lockfile_request,
@@ -54,13 +53,13 @@ class CompileJvmWrappedBinaryRequest:
     def for_scala_sources(
         cls,
         *,
-        tool_name: str,
+        name: str,
         sources: Digest,
         lockfile_request: GenerateJvmLockfileFromTool,
         scala_version: str,
     ) -> CompileJvmWrappedBinaryRequest:
         return cls(
-            tool_name=tool_name,
+            name=name,
             sources=sources,
             accepted_file_extensions=(".scala",),
             lockfile_request=lockfile_request,
@@ -90,13 +89,13 @@ class CompileJvmWrappedBinaryRequest:
     def for_kotlin_sources(
         cls,
         *,
-        tool_name: str,
+        name: str,
         sources: Digest,
         lockfile_request: GenerateJvmLockfileFromTool,
         kotlin_version: str,
     ) -> CompileJvmWrappedBinaryRequest:
         return cls(
-            tool_name=tool_name,
+            name=name,
             sources=sources,
             accepted_file_extensions=(".kt",),
             lockfile_request=lockfile_request,
@@ -112,8 +111,6 @@ class CompileJvmWrappedBinaryRequest:
             ),
         )
 
-class CompiledJvmWrappedBinary:
-    tool_name: ClassVar[str]
 
 @rule
 async def compile_jvm_wrapped_binary(
@@ -133,7 +130,7 @@ async def compile_jvm_wrapped_binary(
                 PathGlobs(
                     [f"**/*{ext}" for ext in request.accepted_file_extensions],
                     glob_match_error_behavior=GlobMatchErrorBehavior.error,
-                    description_of_origin=f"{request.tool_name} sources",
+                    description_of_origin=f"{request.name} sources",
                 ),
             ),
         ),
@@ -173,7 +170,7 @@ async def compile_jvm_wrapped_binary(
             ],
             input_digest=merged_digest,
             output_directories=(dest_dir,),
-            description=f"Compile {request.tool_name} sources.",
+            description=f"Compile {request.name} sources.",
             level=LogLevel.DEBUG,
             use_nailgun=False,
         ),

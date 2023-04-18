@@ -250,7 +250,7 @@ async def setup_kotlin_parser_classfiles() -> KotlinParserBinary:
         ClasspathEntry,
         CompileJvmWrappedBinaryRequest,
         CompileJvmWrappedBinaryRequest.for_kotlin_sources(
-            tool_name="kotlin_parser",
+            name="kotlin_parser",
             sources=source_digest,
             lockfile_request=parser_lockfile_request,
             kotlin_version=_PARSER_KOTLIN_VERSION,

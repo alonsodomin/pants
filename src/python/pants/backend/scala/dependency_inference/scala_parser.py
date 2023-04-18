@@ -324,7 +324,7 @@ async def setup_scala_parser_classfiles() -> ScalaParserBinary:
         ClasspathEntry,
         CompileJvmWrappedBinaryRequest,
         CompileJvmWrappedBinaryRequest.for_scala_sources(
-            tool_name="scala_parser",
+            name="scala_parser",
             sources=source_digest,
             lockfile_request=parser_lockfile_request,
             scala_version=_PARSER_SCALA_VERSION,

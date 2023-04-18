@@ -169,7 +169,7 @@ async def build_java_parser() -> JavaParserBinary:
         ClasspathEntry,
         CompileJvmWrappedBinaryRequest,
         CompileJvmWrappedBinaryRequest.for_java_sources(
-            tool_name="java_parser", sources=source_digest, lockfile_request=parser_lockfile_request
+            name="java_parser", sources=source_digest, lockfile_request=parser_lockfile_request
         ),
     )
     return JavaParserBinary(classpath_entry)

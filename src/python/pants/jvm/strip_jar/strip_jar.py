@@ -7,19 +7,19 @@ from typing import Tuple
 import pkg_resources
 
 from pants.core.goals.generate_lockfiles import DEFAULT_TOOL_LOCKFILE, GenerateToolLockfileSentinel
-from pants.engine.fs import AddPrefix, CreateDigest, Digest, Directory, FileContent
-from pants.engine.internals.native_engine import MergeDigests, RemovePrefix
+from pants.engine.fs import AddPrefix, CreateDigest, Digest, FileContent
+from pants.engine.internals.native_engine import RemovePrefix
 from pants.engine.process import FallibleProcessResult, ProcessResult
 from pants.engine.rules import Get, MultiGet, collect_rules, rule
 from pants.engine.unions import UnionRule
+from pants.jvm import wrapped_binaries
+from pants.jvm.compile import ClasspathEntry
 from pants.jvm.jdk_rules import InternalJdk, JvmProcess
 from pants.jvm.resolve.coursier_fetch import ToolClasspath, ToolClasspathRequest
 from pants.jvm.resolve.jvm_tool import GenerateJvmLockfileFromTool, GenerateJvmToolLockfileSentinel
+from pants.jvm.wrapped_binaries import CompileJvmWrappedBinaryRequest
 from pants.util.logging import LogLevel
 from pants.util.ordered_set import FrozenOrderedSet
-from pants.jvm.compile import ClasspathEntry
-from pants.jvm.wrapped_binaries import CompileJvmWrappedBinaryRequest
-from pants.jvm import wrapped_binaries
 
 _STRIP_JAR_BASENAME = "StripJar.java"
 _OUTPUT_PATH = "__stripped_jars"
@@ -101,7 +101,7 @@ def _load_strip_jar_source() -> bytes:
 
 
 @rule
-async def build_strip_jar_processor() -> StripJarBinary:    
+async def build_strip_jar_processor() -> StripJarBinary:
     lockfile_request, source_digest = await MultiGet(
         Get(GenerateJvmLockfileFromTool, StripJarToolLockfileSentinel()),
         Get(
@@ -121,8 +121,8 @@ async def build_strip_jar_processor() -> StripJarBinary:
         ClasspathEntry,
         CompileJvmWrappedBinaryRequest,
         CompileJvmWrappedBinaryRequest.for_java_sources(
-            tool_name="strip_jar", sources=source_digest, lockfile_request=lockfile_request
-        )
+            name="strip_jar", sources=source_digest, lockfile_request=lockfile_request
+        ),
     )
     return StripJarBinary(classpath_entry)
 
