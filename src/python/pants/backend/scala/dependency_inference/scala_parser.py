@@ -12,29 +12,21 @@ from pants.backend.scala.subsystems.scala import ScalaSubsystem
 from pants.backend.scala.subsystems.scalac import Scalac
 from pants.core.goals.generate_lockfiles import DEFAULT_TOOL_LOCKFILE, GenerateToolLockfileSentinel
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
-from pants.engine.fs import (
-    AddPrefix,
-    CreateDigest,
-    Digest,
-    DigestContents,
-    Directory,
-    FileContent,
-    MergeDigests,
-    RemovePrefix,
-)
+from pants.engine.fs import AddPrefix, CreateDigest, Digest, DigestContents, FileContent
 from pants.engine.internals.selectors import Get, MultiGet
-from pants.engine.process import FallibleProcessResult, ProcessExecutionFailure, ProcessResult
+from pants.engine.process import FallibleProcessResult, ProcessExecutionFailure
 from pants.engine.rules import collect_rules, rule
 from pants.engine.target import WrappedTarget, WrappedTargetRequest
 from pants.engine.unions import UnionRule
+from pants.jvm import wrapped_binaries
 from pants.jvm.compile import ClasspathEntry
 from pants.jvm.jdk_rules import InternalJdk, JvmProcess
 from pants.jvm.jdk_rules import rules as jdk_rules
-from pants.jvm.resolve.common import ArtifactRequirements, Coordinate
 from pants.jvm.resolve.coursier_fetch import ToolClasspath, ToolClasspathRequest
 from pants.jvm.resolve.jvm_tool import GenerateJvmLockfileFromTool, GenerateJvmToolLockfileSentinel
 from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmResolveField
+from pants.jvm.wrapped_binaries import CompileJvmWrappedBinaryRequest
 from pants.option.global_options import KeepSandboxes
 from pants.util.frozendict import FrozenDict
 from pants.util.logging import LogLevel
@@ -188,8 +180,9 @@ class FallibleScalaSourceDependencyAnalysisResult:
     process_result: FallibleProcessResult
 
 
-class ScalaParserCompiledClassfiles(ClasspathEntry):
-    pass
+@dataclass(frozen=True)
+class ScalaParserBinary:
+    classpath: ClasspathEntry
 
 
 @dataclass(frozen=True)
@@ -226,7 +219,7 @@ async def create_analyze_scala_source_request(
 @rule(level=LogLevel.DEBUG)
 async def analyze_scala_source_dependencies(
     jdk: InternalJdk,
-    processor_classfiles: ScalaParserCompiledClassfiles,
+    scala_parser: ScalaParserBinary,
     request: AnalyzeScalaSourceRequest,
 ) -> FallibleScalaSourceDependencyAnalysisResult:
     source_files = request.source_files
@@ -258,7 +251,7 @@ async def analyze_scala_source_dependencies(
 
     extra_immutable_input_digests = {
         toolcp_relpath: tool_classpath.digest,
-        processorcp_relpath: processor_classfiles.digest,
+        processorcp_relpath: scala_parser.classpath.digest,
     }
 
     analysis_output_path = "__source_analysis.json"
@@ -312,11 +305,8 @@ async def resolve_fallible_result_to_analysis(
     )
 
 
-# TODO(13879): Consolidate compilation of wrapper binaries to common rules.
 @rule
-async def setup_scala_parser_classfiles(jdk: InternalJdk) -> ScalaParserCompiledClassfiles:
-    dest_dir = "classfiles"
-
+async def setup_scala_parser_classfiles() -> ScalaParserBinary:
     parser_source_content = read_resource(
         "pants.backend.scala.dependency_inference", "ScalaParser.scala"
     )
@@ -325,81 +315,22 @@ async def setup_scala_parser_classfiles(jdk: InternalJdk) -> ScalaParserCompiled
 
     parser_source = FileContent("ScalaParser.scala", parser_source_content)
 
-    parser_lockfile_request = await Get(
-        GenerateJvmLockfileFromTool, ScalaParserToolLockfileSentinel()
+    parser_lockfile_request, source_digest = await MultiGet(
+        Get(GenerateJvmLockfileFromTool, ScalaParserToolLockfileSentinel()),
+        Get(Digest, CreateDigest([parser_source])),
     )
 
-    tool_classpath, parser_classpath, source_digest = await MultiGet(
-        Get(
-            ToolClasspath,
-            ToolClasspathRequest(
-                prefix="__toolcp",
-                artifact_requirements=ArtifactRequirements.from_coordinates(
-                    [
-                        Coordinate(
-                            group="org.scala-lang",
-                            artifact="scala-compiler",
-                            version=_PARSER_SCALA_VERSION,
-                        ),
-                        Coordinate(
-                            group="org.scala-lang",
-                            artifact="scala-library",
-                            version=_PARSER_SCALA_VERSION,
-                        ),
-                        Coordinate(
-                            group="org.scala-lang",
-                            artifact="scala-reflect",
-                            version=_PARSER_SCALA_VERSION,
-                        ),
-                    ]
-                ),
-            ),
-        ),
-        Get(
-            ToolClasspath,
-            ToolClasspathRequest(prefix="__parsercp", lockfile=parser_lockfile_request),
-        ),
-        Get(Digest, CreateDigest([parser_source, Directory(dest_dir)])),
-    )
-
-    merged_digest = await Get(
-        Digest,
-        MergeDigests(
-            (
-                tool_classpath.digest,
-                parser_classpath.digest,
-                source_digest,
-            )
+    classpath_entry = await Get(
+        ClasspathEntry,
+        CompileJvmWrappedBinaryRequest,
+        CompileJvmWrappedBinaryRequest.for_scala_sources(
+            tool_name="scala_parser",
+            sources=source_digest,
+            lockfile_request=parser_lockfile_request,
+            scala_version=_PARSER_SCALA_VERSION,
         ),
     )
-
-    process_result = await Get(
-        ProcessResult,
-        JvmProcess(
-            jdk=jdk,
-            classpath_entries=tool_classpath.classpath_entries(),
-            argv=[
-                "scala.tools.nsc.Main",
-                "-bootclasspath",
-                ":".join(tool_classpath.classpath_entries()),
-                "-classpath",
-                ":".join(parser_classpath.classpath_entries()),
-                "-d",
-                dest_dir,
-                parser_source.path,
-            ],
-            input_digest=merged_digest,
-            output_directories=(dest_dir,),
-            description="Compile Scala parser for dependency inference with scalac",
-            level=LogLevel.DEBUG,
-            # NB: We do not use nailgun for this process, since it is launched exactly once.
-            use_nailgun=False,
-        ),
-    )
-    stripped_classfiles_digest = await Get(
-        Digest, RemovePrefix(process_result.output_digest, dest_dir)
-    )
-    return ScalaParserCompiledClassfiles(digest=stripped_classfiles_digest)
+    return ScalaParserBinary(classpath_entry)
 
 
 @rule
@@ -430,5 +361,6 @@ def rules():
     return (
         *collect_rules(),
         *jdk_rules(),
+        *wrapped_binaries.rules(),
         UnionRule(GenerateToolLockfileSentinel, ScalaParserToolLockfileSentinel),
     )

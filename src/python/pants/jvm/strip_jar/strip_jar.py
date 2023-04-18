@@ -17,6 +17,9 @@ from pants.jvm.resolve.coursier_fetch import ToolClasspath, ToolClasspathRequest
 from pants.jvm.resolve.jvm_tool import GenerateJvmLockfileFromTool, GenerateJvmToolLockfileSentinel
 from pants.util.logging import LogLevel
 from pants.util.ordered_set import FrozenOrderedSet
+from pants.jvm.compile import ClasspathEntry
+from pants.jvm.wrapped_binaries import CompileJvmWrappedBinaryRequest
+from pants.jvm import wrapped_binaries
 
 _STRIP_JAR_BASENAME = "StripJar.java"
 _OUTPUT_PATH = "__stripped_jars"
@@ -38,13 +41,13 @@ class FallibleStripJarResult:
 
 
 @dataclass(frozen=True)
-class StripJarCompiledClassfiles:
-    digest: Digest
+class StripJarBinary:
+    classpath: ClasspathEntry
 
 
 @rule(level=LogLevel.DEBUG)
 async def strip_jar(
-    processor_classfiles: StripJarCompiledClassfiles,
+    processor: StripJarBinary,
     jdk: InternalJdk,
     request: StripJarRequest,
 ) -> Digest:
@@ -69,7 +72,7 @@ async def strip_jar(
 
     extra_immutable_input_digests = {
         toolcp_relpath: tool_classpath.digest,
-        processorcp_relpath: processor_classfiles.digest,
+        processorcp_relpath: processor.classpath.digest,
     }
 
     process_result = await Get(
@@ -97,16 +100,10 @@ def _load_strip_jar_source() -> bytes:
     return pkg_resources.resource_string(__name__, _STRIP_JAR_BASENAME)
 
 
-# TODO(13879): Consolidate compilation of wrapper binaries to common rules.
 @rule
-async def build_processors(jdk: InternalJdk) -> StripJarCompiledClassfiles:
-    dest_dir = "classfiles"
-    lockfile_request = await Get(GenerateJvmLockfileFromTool, StripJarToolLockfileSentinel())
-    materialized_classpath, source_digest = await MultiGet(
-        Get(
-            ToolClasspath,
-            ToolClasspathRequest(prefix="__toolcp", lockfile=lockfile_request),
-        ),
+async def build_strip_jar_processor() -> StripJarBinary:    
+    lockfile_request, source_digest = await MultiGet(
+        Get(GenerateJvmLockfileFromTool, StripJarToolLockfileSentinel()),
         Get(
             Digest,
             CreateDigest(
@@ -115,47 +112,19 @@ async def build_processors(jdk: InternalJdk) -> StripJarCompiledClassfiles:
                         path=_STRIP_JAR_BASENAME,
                         content=_load_strip_jar_source(),
                     ),
-                    Directory(dest_dir),
                 ]
             ),
         ),
     )
 
-    merged_digest = await Get(
-        Digest,
-        MergeDigests(
-            (
-                materialized_classpath.digest,
-                source_digest,
-            )
-        ),
+    classpath_entry = await Get(
+        ClasspathEntry,
+        CompileJvmWrappedBinaryRequest,
+        CompileJvmWrappedBinaryRequest.for_java_sources(
+            tool_name="strip_jar", sources=source_digest, lockfile_request=lockfile_request
+        )
     )
-
-    process_result = await Get(
-        ProcessResult,
-        JvmProcess(
-            jdk=jdk,
-            classpath_entries=[f"{jdk.java_home}/lib/tools.jar"],
-            argv=[
-                "com.sun.tools.javac.Main",
-                "-cp",
-                ":".join(materialized_classpath.classpath_entries()),
-                "-d",
-                dest_dir,
-                _STRIP_JAR_BASENAME,
-            ],
-            input_digest=merged_digest,
-            output_directories=(dest_dir,),
-            description=f"Compile {_STRIP_JAR_BASENAME} with javac",
-            level=LogLevel.DEBUG,
-            # NB: We do not use nailgun for this process, since it is launched exactly once.
-            use_nailgun=False,
-        ),
-    )
-    stripped_classfiles_digest = await Get(
-        Digest, RemovePrefix(process_result.output_digest, dest_dir)
-    )
-    return StripJarCompiledClassfiles(digest=stripped_classfiles_digest)
+    return StripJarBinary(classpath_entry)
 
 
 @rule
@@ -183,5 +152,6 @@ def generate_strip_jar_lockfile_request(
 def rules():
     return [
         *collect_rules(),
+        *wrapped_binaries.rules(),
         UnionRule(GenerateToolLockfileSentinel, StripJarToolLockfileSentinel),
     ]

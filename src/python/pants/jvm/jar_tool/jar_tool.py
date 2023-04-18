@@ -10,29 +10,20 @@ from typing import Iterable, Mapping
 
 import pkg_resources
 
-from pants.base.glob_match_error_behavior import GlobMatchErrorBehavior
 from pants.core.goals.generate_lockfiles import DEFAULT_TOOL_LOCKFILE, GenerateToolLockfileSentinel
-from pants.engine.fs import (
-    CreateDigest,
-    Digest,
-    DigestEntries,
-    DigestSubset,
-    Directory,
-    FileContent,
-    FileEntry,
-    MergeDigests,
-    PathGlobs,
-    RemovePrefix,
-)
+from pants.engine.fs import CreateDigest, Digest, Directory, FileContent, RemovePrefix
 from pants.engine.process import ProcessResult
 from pants.engine.rules import Get, MultiGet, collect_rules, rule
 from pants.engine.unions import UnionRule
+from pants.jvm import wrapped_binaries
+from pants.jvm.compile import ClasspathEntry
 from pants.jvm.jdk_rules import InternalJdk, JvmProcess
 from pants.jvm.jdk_rules import rules as jdk_rules
 from pants.jvm.resolve.coursier_fetch import ToolClasspath, ToolClasspathRequest
 from pants.jvm.resolve.coursier_fetch import rules as coursier_fetch_rules
 from pants.jvm.resolve.jvm_tool import GenerateJvmLockfileFromTool
 from pants.jvm.resolve.jvm_tool import rules as jvm_tool_rules
+from pants.jvm.wrapped_binaries import CompileJvmWrappedBinaryRequest
 from pants.util.frozendict import FrozenDict
 from pants.util.logging import LogLevel
 from pants.util.ordered_set import FrozenOrderedSet
@@ -114,13 +105,13 @@ class JarToolGenerateLockfileSentinel(GenerateToolLockfileSentinel):
 
 
 @dataclass(frozen=True)
-class JarToolCompiledClassfiles:
-    digest: Digest
+class JarToolBinary:
+    classpath: ClasspathEntry
 
 
 @rule
 async def run_jar_tool(
-    request: JarToolRequest, jdk: InternalJdk, jar_tool: JarToolCompiledClassfiles
+    request: JarToolRequest, jdk: InternalJdk, jar_tool: JarToolBinary
 ) -> Digest:
     output_prefix = "__out"
     output_jarname = os.path.join(output_prefix, request.jar_name)
@@ -137,7 +128,7 @@ async def run_jar_tool(
     input_prefix = "__in"
     immutable_input_digests = {
         toolcp_prefix: tool_classpath.digest,
-        jartoolcp_prefix: jar_tool.digest,
+        jartoolcp_prefix: jar_tool.classpath.digest,
         input_prefix: request.digest,
     }
 
@@ -200,8 +191,6 @@ _JAR_TOOL_SRC_PACKAGES = ["args4j", "jar_tool_source"]
 def _load_jar_tool_sources() -> list[FileContent]:
     result = []
     for package in _JAR_TOOL_SRC_PACKAGES:
-        # pkg_path = package.replace(".", os.path.sep)
-        # relative_folder = os.path.join("src", pkg_path)
         for basename in pkg_resources.resource_listdir(__name__, package):
             result.append(
                 FileContent(
@@ -214,10 +203,9 @@ def _load_jar_tool_sources() -> list[FileContent]:
     return result
 
 
-# TODO(13879): Consolidate compilation of wrapper binaries to common rules.
 @rule
-async def build_jar_tool(jdk: InternalJdk) -> JarToolCompiledClassfiles:
-    lockfile_request, source_digest = await MultiGet(
+async def build_jar_tool() -> JarToolBinary:
+    lockfile_request, sources_digest = await MultiGet(
         Get(GenerateJvmLockfileFromTool, JarToolGenerateLockfileSentinel()),
         Get(
             Digest,
@@ -225,56 +213,14 @@ async def build_jar_tool(jdk: InternalJdk) -> JarToolCompiledClassfiles:
         ),
     )
 
-    dest_dir = "classfiles"
-    materialized_classpath, java_subset_digest, empty_dest_dir = await MultiGet(
-        Get(ToolClasspath, ToolClasspathRequest(prefix="__toolcp", lockfile=lockfile_request)),
-        Get(
-            Digest,
-            DigestSubset(
-                source_digest,
-                PathGlobs(
-                    ["**/*.java"],
-                    glob_match_error_behavior=GlobMatchErrorBehavior.error,
-                    description_of_origin="jar tool sources",
-                ),
-            ),
-        ),
-        Get(Digest, CreateDigest([Directory(path=dest_dir)])),
-    )
-
-    merged_digest, src_entries = await MultiGet(
-        Get(
-            Digest,
-            MergeDigests([materialized_classpath.digest, source_digest, empty_dest_dir]),
-        ),
-        Get(DigestEntries, Digest, java_subset_digest),
-    )
-
-    compile_result = await Get(
-        ProcessResult,
-        JvmProcess(
-            jdk=jdk,
-            classpath_entries=[f"{jdk.java_home}/lib/tools.jar"],
-            argv=[
-                "com.sun.tools.javac.Main",
-                "-cp",
-                ":".join(materialized_classpath.classpath_entries()),
-                "-d",
-                dest_dir,
-                *[entry.path for entry in src_entries if isinstance(entry, FileEntry)],
-            ],
-            input_digest=merged_digest,
-            output_directories=(dest_dir,),
-            description="Compile jar-tool sources using javac.",
-            level=LogLevel.DEBUG,
-            use_nailgun=False,
+    classpath_entry = await Get(
+        ClasspathEntry,
+        CompileJvmWrappedBinaryRequest,
+        CompileJvmWrappedBinaryRequest.for_java_sources(
+            tool_name="jar_tool", sources=sources_digest, lockfile_request=lockfile_request
         ),
     )
-
-    stripped_classfiles_digest = await Get(
-        Digest, RemovePrefix(compile_result.output_digest, dest_dir)
-    )
-    return JarToolCompiledClassfiles(digest=stripped_classfiles_digest)
+    return JarToolBinary(classpath_entry)
 
 
 @rule
@@ -304,5 +250,6 @@ def rules():
         *coursier_fetch_rules(),
         *jdk_rules(),
         *jvm_tool_rules(),
+        *wrapped_binaries.rules(),
         UnionRule(GenerateToolLockfileSentinel, JarToolGenerateLockfileSentinel),
     ]

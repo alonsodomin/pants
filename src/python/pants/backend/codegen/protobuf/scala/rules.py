@@ -42,14 +42,16 @@ from pants.engine.target import (
     TransitiveTargetsRequest,
 )
 from pants.engine.unions import UnionRule
+from pants.jvm import wrapped_binaries
 from pants.jvm.compile import ClasspathEntry
 from pants.jvm.dependency_inference import artifact_mapper
 from pants.jvm.goals import lockfile
 from pants.jvm.jdk_rules import InternalJdk, JvmProcess
-from pants.jvm.resolve.common import ArtifactRequirements, Coordinate, GatherJvmCoordinatesRequest
+from pants.jvm.resolve.common import ArtifactRequirements, GatherJvmCoordinatesRequest
 from pants.jvm.resolve.coursier_fetch import ToolClasspath, ToolClasspathRequest
 from pants.jvm.resolve.jvm_tool import GenerateJvmLockfileFromTool, GenerateJvmToolLockfileSentinel
 from pants.jvm.target_types import PrefixedJvmJdkField, PrefixedJvmResolveField
+from pants.jvm.wrapped_binaries import CompileJvmWrappedBinaryRequest
 from pants.source.source_root import SourceRoot, SourceRootRequest
 from pants.util.logging import LogLevel
 from pants.util.ordered_set import FrozenOrderedSet
@@ -65,8 +67,9 @@ class ScalapbcToolLockfileSentinel(GenerateJvmToolLockfileSentinel):
     resolve_name = ScalaPBSubsystem.options_scope
 
 
-class ScalaPBShimCompiledClassfiles(ClasspathEntry):
-    pass
+@dataclass(frozen=True)
+class ScalaPBShimBinary:
+    classpath: ClasspathEntry
 
 
 @dataclass(frozen=True)
@@ -103,7 +106,7 @@ async def generate_scala_from_protobuf(
     request: GenerateScalaFromProtobufRequest,
     protoc: Protoc,
     scalapb: ScalaPBSubsystem,
-    shim_classfiles: ScalaPBShimCompiledClassfiles,
+    shim_binary: ScalaPBShimBinary,
     jdk: InternalJdk,
     platform: Platform,
 ) -> GeneratedSources:
@@ -161,7 +164,7 @@ async def generate_scala_from_protobuf(
 
     extra_immutable_input_digests = {
         toolcp_relpath: tool_classpath.digest,
-        shimcp_relpath: shim_classfiles.digest,
+        shimcp_relpath: shim_binary.classpath.digest,
         plugins_relpath: merged_jvm_plugins_digest,
         protoc_relpath: downloaded_protoc_binary.digest,
     }
@@ -237,14 +240,8 @@ async def materialize_jvm_plugins(
 SHIM_SCALA_VERSION = "2.13.7"
 
 
-# TODO(13879): Consolidate compilation of wrapper binaries to common rules.
 @rule
-async def setup_scalapb_shim_classfiles(
-    scalapb: ScalaPBSubsystem,
-    jdk: InternalJdk,
-) -> ScalaPBShimCompiledClassfiles:
-    dest_dir = "classfiles"
-
+async def setup_scalapb_shim_classfiles() -> ScalaPBShimBinary:
     scalapb_shim_content = read_resource(
         "pants.backend.codegen.protobuf.scala", "ScalaPBShim.scala"
     )
@@ -253,69 +250,22 @@ async def setup_scalapb_shim_classfiles(
 
     scalapb_shim_source = FileContent("ScalaPBShim.scala", scalapb_shim_content)
 
-    lockfile_request = await Get(GenerateJvmLockfileFromTool, ScalapbcToolLockfileSentinel())
-    tool_classpath, shim_classpath, source_digest = await MultiGet(
-        Get(
-            ToolClasspath,
-            ToolClasspathRequest(
-                prefix="__toolcp",
-                artifact_requirements=ArtifactRequirements.from_coordinates(
-                    [
-                        Coordinate(
-                            group="org.scala-lang",
-                            artifact="scala-compiler",
-                            version=SHIM_SCALA_VERSION,
-                        ),
-                        Coordinate(
-                            group="org.scala-lang",
-                            artifact="scala-library",
-                            version=SHIM_SCALA_VERSION,
-                        ),
-                        Coordinate(
-                            group="org.scala-lang",
-                            artifact="scala-reflect",
-                            version=SHIM_SCALA_VERSION,
-                        ),
-                    ]
-                ),
-            ),
-        ),
-        Get(ToolClasspath, ToolClasspathRequest(prefix="__shimcp", lockfile=lockfile_request)),
-        Get(Digest, CreateDigest([scalapb_shim_source, Directory(dest_dir)])),
+    lockfile_request, source_digest = await MultiGet(
+        Get(GenerateJvmLockfileFromTool, ScalapbcToolLockfileSentinel()),
+        Get(Digest, CreateDigest([scalapb_shim_source])),
     )
 
-    merged_digest = await Get(
-        Digest, MergeDigests((tool_classpath.digest, shim_classpath.digest, source_digest))
-    )
-
-    process_result = await Get(
-        ProcessResult,
-        JvmProcess(
-            jdk=jdk,
-            classpath_entries=tool_classpath.classpath_entries(),
-            argv=[
-                "scala.tools.nsc.Main",
-                "-bootclasspath",
-                ":".join(tool_classpath.classpath_entries()),
-                "-classpath",
-                ":".join(shim_classpath.classpath_entries()),
-                "-d",
-                dest_dir,
-                scalapb_shim_source.path,
-            ],
-            input_digest=merged_digest,
-            extra_jvm_options=scalapb.jvm_options,
-            output_directories=(dest_dir,),
-            description="Compile ScalaPB shim with scalac",
-            level=LogLevel.DEBUG,
-            # NB: We do not use nailgun for this process, since it is launched exactly once.
-            use_nailgun=False,
+    classpath_entry = await Get(
+        ClasspathEntry,
+        CompileJvmWrappedBinaryRequest,
+        CompileJvmWrappedBinaryRequest.for_scala_sources(
+            tool_name="scalapb_shim",
+            sources=source_digest,
+            lockfile_request=lockfile_request,
+            scala_version=SHIM_SCALA_VERSION,
         ),
     )
-    stripped_classfiles_digest = await Get(
-        Digest, RemovePrefix(process_result.output_digest, dest_dir)
-    )
-    return ScalaPBShimCompiledClassfiles(digest=stripped_classfiles_digest)
+    return ScalaPBShimBinary(classpath_entry)
 
 
 @rule
@@ -330,6 +280,7 @@ def rules():
         *collect_rules(),
         *lockfile.rules(),
         *dependency_inference.rules(),
+        *wrapped_binaries.rules(),
         UnionRule(GenerateSourcesRequest, GenerateScalaFromProtobufRequest),
         UnionRule(GenerateToolLockfileSentinel, ScalapbcToolLockfileSentinel),
         ProtobufSourceTarget.register_plugin_field(PrefixedJvmJdkField),

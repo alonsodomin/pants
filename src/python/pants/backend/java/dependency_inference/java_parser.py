@@ -13,14 +13,16 @@ import pkg_resources
 from pants.backend.java.dependency_inference.types import JavaSourceDependencyAnalysis
 from pants.core.goals.generate_lockfiles import DEFAULT_TOOL_LOCKFILE, GenerateToolLockfileSentinel
 from pants.core.util_rules.source_files import SourceFiles
-from pants.engine.fs import AddPrefix, CreateDigest, Digest, DigestContents, Directory, FileContent
-from pants.engine.internals.native_engine import MergeDigests, RemovePrefix
-from pants.engine.process import FallibleProcessResult, ProcessExecutionFailure, ProcessResult
+from pants.engine.fs import AddPrefix, CreateDigest, Digest, DigestContents, FileContent
+from pants.engine.process import FallibleProcessResult, ProcessExecutionFailure
 from pants.engine.rules import Get, MultiGet, collect_rules, rule
 from pants.engine.unions import UnionRule
+from pants.jvm import wrapped_binaries
+from pants.jvm.compile import ClasspathEntry
 from pants.jvm.jdk_rules import InternalJdk, JvmProcess
 from pants.jvm.resolve.coursier_fetch import ToolClasspath, ToolClasspathRequest
 from pants.jvm.resolve.jvm_tool import GenerateJvmLockfileFromTool, GenerateJvmToolLockfileSentinel
+from pants.jvm.wrapped_binaries import CompileJvmWrappedBinaryRequest
 from pants.option.global_options import KeepSandboxes
 from pants.util.logging import LogLevel
 from pants.util.ordered_set import FrozenOrderedSet
@@ -46,8 +48,8 @@ class FallibleJavaSourceDependencyAnalysisResult:
 
 
 @dataclass(frozen=True)
-class JavaParserCompiledClassfiles:
-    digest: Digest
+class JavaParserBinary:
+    classpath: ClasspathEntry
 
 
 @rule(level=LogLevel.DEBUG)
@@ -81,7 +83,7 @@ async def make_analysis_request_from_source_files(
 
 @rule(level=LogLevel.DEBUG)
 async def analyze_java_source_dependencies(
-    processor_classfiles: JavaParserCompiledClassfiles,
+    java_parser: JavaParserBinary,
     jdk: InternalJdk,
     request: JavaSourceDependencyAnalysisRequest,
 ) -> FallibleJavaSourceDependencyAnalysisResult:
@@ -112,7 +114,7 @@ async def analyze_java_source_dependencies(
 
     extra_immutable_input_digests = {
         toolcp_relpath: tool_classpath.digest,
-        processorcp_relpath: processor_classfiles.digest,
+        processorcp_relpath: java_parser.classpath.digest,
     }
 
     analysis_output_path = "__source_analysis.json"
@@ -146,18 +148,10 @@ def _load_javaparser_launcher_source() -> bytes:
     return pkg_resources.resource_string(__name__, _LAUNCHER_BASENAME)
 
 
-# TODO(13879): Consolidate compilation of wrapper binaries to common rules.
 @rule
-async def build_processors(jdk: InternalJdk) -> JavaParserCompiledClassfiles:
-    dest_dir = "classfiles"
-    parser_lockfile_request = await Get(
-        GenerateJvmLockfileFromTool, JavaParserToolLockfileSentinel()
-    )
-    materialized_classpath, source_digest = await MultiGet(
-        Get(
-            ToolClasspath,
-            ToolClasspathRequest(prefix="__toolcp", lockfile=parser_lockfile_request),
-        ),
+async def build_java_parser() -> JavaParserBinary:
+    parser_lockfile_request, source_digest = await MultiGet(
+        Get(GenerateJvmLockfileFromTool, JavaParserToolLockfileSentinel()),
         Get(
             Digest,
             CreateDigest(
@@ -166,47 +160,19 @@ async def build_processors(jdk: InternalJdk) -> JavaParserCompiledClassfiles:
                         path=_LAUNCHER_BASENAME,
                         content=_load_javaparser_launcher_source(),
                     ),
-                    Directory(dest_dir),
                 ]
             ),
         ),
     )
 
-    merged_digest = await Get(
-        Digest,
-        MergeDigests(
-            (
-                materialized_classpath.digest,
-                source_digest,
-            )
+    classpath_entry = await Get(
+        ClasspathEntry,
+        CompileJvmWrappedBinaryRequest,
+        CompileJvmWrappedBinaryRequest.for_java_sources(
+            tool_name="java_parser", sources=source_digest, lockfile_request=parser_lockfile_request
         ),
     )
-
-    process_result = await Get(
-        ProcessResult,
-        JvmProcess(
-            jdk=jdk,
-            classpath_entries=[f"{jdk.java_home}/lib/tools.jar"],
-            argv=[
-                "com.sun.tools.javac.Main",
-                "-cp",
-                ":".join(materialized_classpath.classpath_entries()),
-                "-d",
-                dest_dir,
-                _LAUNCHER_BASENAME,
-            ],
-            input_digest=merged_digest,
-            output_directories=(dest_dir,),
-            description=f"Compile {_LAUNCHER_BASENAME} import processors with javac",
-            level=LogLevel.DEBUG,
-            # NB: We do not use nailgun for this process, since it is launched exactly once.
-            use_nailgun=False,
-        ),
-    )
-    stripped_classfiles_digest = await Get(
-        Digest, RemovePrefix(process_result.output_digest, dest_dir)
-    )
-    return JavaParserCompiledClassfiles(digest=stripped_classfiles_digest)
+    return JavaParserBinary(classpath_entry)
 
 
 @rule
@@ -236,5 +202,6 @@ def generate_java_parser_lockfile_request(
 def rules():
     return [
         *collect_rules(),
+        *wrapped_binaries.rules(),
         UnionRule(GenerateToolLockfileSentinel, JavaParserToolLockfileSentinel),
     ]

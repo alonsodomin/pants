@@ -9,17 +9,18 @@ from typing import Any, Iterator
 
 from pants.core.goals.generate_lockfiles import DEFAULT_TOOL_LOCKFILE, GenerateToolLockfileSentinel
 from pants.core.util_rules.source_files import SourceFiles
-from pants.engine.fs import CreateDigest, DigestContents, Directory, FileContent
-from pants.engine.internals.native_engine import AddPrefix, Digest, MergeDigests, RemovePrefix
+from pants.engine.fs import CreateDigest, DigestContents, FileContent
+from pants.engine.internals.native_engine import AddPrefix, Digest
 from pants.engine.internals.selectors import Get, MultiGet
-from pants.engine.process import FallibleProcessResult, ProcessExecutionFailure, ProcessResult
+from pants.engine.process import FallibleProcessResult, ProcessExecutionFailure
 from pants.engine.rules import collect_rules, rule
 from pants.engine.unions import UnionRule
+from pants.jvm import wrapped_binaries
 from pants.jvm.compile import ClasspathEntry
 from pants.jvm.jdk_rules import InternalJdk, JdkEnvironment, JdkRequest, JvmProcess
-from pants.jvm.resolve.common import ArtifactRequirements, Coordinate
 from pants.jvm.resolve.coursier_fetch import ToolClasspath, ToolClasspathRequest
 from pants.jvm.resolve.jvm_tool import GenerateJvmLockfileFromTool, GenerateJvmToolLockfileSentinel
+from pants.jvm.wrapped_binaries import CompileJvmWrappedBinaryRequest
 from pants.option.global_options import KeepSandboxes
 from pants.util.frozendict import FrozenDict
 from pants.util.logging import LogLevel
@@ -134,13 +135,14 @@ class FallibleKotlinSourceDependencyAnalysisResult:
     process_result: FallibleProcessResult
 
 
-class KotlinParserCompiledClassfiles(ClasspathEntry):
-    pass
+@dataclass(frozen=True)
+class KotlinParserBinary:
+    classpath: ClasspathEntry
 
 
 @rule(level=LogLevel.DEBUG)
 async def analyze_kotlin_source_dependencies(
-    processor_classfiles: KotlinParserCompiledClassfiles,
+    kotlin_parser: KotlinParserBinary,
     source_files: SourceFiles,
 ) -> FallibleKotlinSourceDependencyAnalysisResult:
     # Use JDK 8 due to https://youtrack.jetbrains.com/issue/KTIJ-17192 and https://youtrack.jetbrains.com/issue/KT-37446.
@@ -177,7 +179,7 @@ async def analyze_kotlin_source_dependencies(
 
     extra_immutable_input_digests = {
         toolcp_relpath: tool_classpath.digest,
-        processorcp_relpath: processor_classfiles.digest,
+        processorcp_relpath: kotlin_parser.classpath.digest,
     }
 
     analysis_output_path = "__source_analysis.json"
@@ -230,9 +232,7 @@ async def resolve_fallible_result_to_analysis(
 
 
 @rule
-async def setup_kotlin_parser_classfiles(jdk: InternalJdk) -> KotlinParserCompiledClassfiles:
-    dest_dir = "classfiles"
-
+async def setup_kotlin_parser_classfiles() -> KotlinParserBinary:
     parser_source_content = read_resource(
         "pants.backend.kotlin.dependency_inference", "KotlinParser.kt"
     )
@@ -241,69 +241,22 @@ async def setup_kotlin_parser_classfiles(jdk: InternalJdk) -> KotlinParserCompil
 
     parser_source = FileContent("KotlinParser.kt", parser_source_content)
 
-    parser_lockfile_request = await Get(
-        GenerateJvmLockfileFromTool, KotlinParserToolLockfileSentinel()
+    parser_lockfile_request, source_digest = await MultiGet(
+        Get(GenerateJvmLockfileFromTool, KotlinParserToolLockfileSentinel()),
+        Get(Digest, CreateDigest([parser_source])),
     )
 
-    tool_classpath, parser_classpath, source_digest = await MultiGet(
-        Get(
-            ToolClasspath,
-            ToolClasspathRequest(
-                prefix="__toolcp",
-                artifact_requirements=ArtifactRequirements.from_coordinates(
-                    [
-                        Coordinate(
-                            group="org.jetbrains.kotlin",
-                            artifact="kotlin-compiler-embeddable",
-                            version=_PARSER_KOTLIN_VERSION,  # TODO: Pull from resolve or hard-code Kotlin version?
-                        ),
-                    ]
-                ),
-            ),
-        ),
-        Get(
-            ToolClasspath,
-            ToolClasspathRequest(prefix="__parsercp", lockfile=parser_lockfile_request),
-        ),
-        Get(Digest, CreateDigest([parser_source, Directory(dest_dir)])),
-    )
-
-    merged_digest = await Get(
-        Digest,
-        MergeDigests(
-            (
-                tool_classpath.digest,
-                parser_classpath.digest,
-                source_digest,
-            )
+    classpath_entry = await Get(
+        ClasspathEntry,
+        CompileJvmWrappedBinaryRequest,
+        CompileJvmWrappedBinaryRequest.for_kotlin_sources(
+            tool_name="kotlin_parser",
+            sources=source_digest,
+            lockfile_request=parser_lockfile_request,
+            kotlin_version=_PARSER_KOTLIN_VERSION,
         ),
     )
-
-    process_result = await Get(
-        ProcessResult,
-        JvmProcess(
-            jdk=jdk,
-            classpath_entries=tool_classpath.classpath_entries(),
-            argv=[
-                "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
-                "-classpath",
-                ":".join(parser_classpath.classpath_entries()),
-                "-d",
-                dest_dir,
-                parser_source.path,
-            ],
-            input_digest=merged_digest,
-            output_directories=(dest_dir,),
-            description="Compile Kotlin parser for dependency inference with kotlinc",
-            level=LogLevel.DEBUG,
-            # NB: We do not use nailgun for this process, since it is launched exactly once.
-            use_nailgun=False,
-        ),
-    )
-    stripped_classfiles_digest = await Get(
-        Digest, RemovePrefix(process_result.output_digest, dest_dir)
-    )
-    return KotlinParserCompiledClassfiles(digest=stripped_classfiles_digest)
+    return KotlinParserBinary(classpath_entry)
 
 
 @rule
@@ -333,5 +286,6 @@ def generate_kotlin_parser_lockfile_request(
 def rules():
     return (
         *collect_rules(),
+        *wrapped_binaries.rules(),
         UnionRule(GenerateToolLockfileSentinel, KotlinParserToolLockfileSentinel),
     )
