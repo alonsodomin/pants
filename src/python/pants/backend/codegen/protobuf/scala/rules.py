@@ -14,6 +14,8 @@ from pants.backend.codegen.protobuf.target_types import (
     ProtobufSourceTarget,
 )
 from pants.backend.scala.target_types import ScalaSourceField
+from pants.backend.scala.util_rules import wrapped_binaries
+from pants.backend.scala.util_rules.wrapped_binaries import CompileScalaWrappedBinaryRequest
 from pants.core.goals.generate_lockfiles import GenerateToolLockfileSentinel
 from pants.core.util_rules import distdir
 from pants.core.util_rules.external_tool import DownloadedExternalTool, ExternalToolRequest
@@ -42,7 +44,6 @@ from pants.engine.target import (
     TransitiveTargetsRequest,
 )
 from pants.engine.unions import UnionRule
-from pants.jvm import wrapped_binaries
 from pants.jvm.compile import ClasspathEntry
 from pants.jvm.dependency_inference import artifact_mapper
 from pants.jvm.goals import lockfile
@@ -259,7 +260,7 @@ async def setup_scalapb_shim_classfiles() -> ScalaPBShimBinary:
     classpath_entry = await Get(
         ClasspathEntry,
         CompileJvmWrappedBinaryRequest,
-        CompileJvmWrappedBinaryRequest.for_scala_sources(
+        CompileScalaWrappedBinaryRequest.create(
             name="scalapb_shim",
             sources=source_digest,
             lockfile_request=lockfile_request,

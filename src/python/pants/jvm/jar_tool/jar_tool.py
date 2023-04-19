@@ -23,7 +23,10 @@ from pants.jvm.resolve.coursier_fetch import ToolClasspath, ToolClasspathRequest
 from pants.jvm.resolve.coursier_fetch import rules as coursier_fetch_rules
 from pants.jvm.resolve.jvm_tool import GenerateJvmLockfileFromTool
 from pants.jvm.resolve.jvm_tool import rules as jvm_tool_rules
-from pants.jvm.wrapped_binaries import CompileJvmWrappedBinaryRequest
+from pants.jvm.wrapped_binaries import (
+    CompileJavaWrappedBinaryRequest,
+    CompileJvmWrappedBinaryRequest,
+)
 from pants.util.frozendict import FrozenDict
 from pants.util.logging import LogLevel
 from pants.util.ordered_set import FrozenOrderedSet
@@ -216,7 +219,7 @@ async def build_jar_tool() -> JarToolBinary:
     classpath_entry = await Get(
         ClasspathEntry,
         CompileJvmWrappedBinaryRequest,
-        CompileJvmWrappedBinaryRequest.for_java_sources(
+        CompileJavaWrappedBinaryRequest.create(
             name="jar_tool", sources=sources_digest, lockfile_request=lockfile_request
         ),
     )

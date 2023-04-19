@@ -2,10 +2,13 @@
 # Licensed under the Apache License, Version 2.0 (see LICENSE).
 from __future__ import annotations
 
+from abc import ABC
 from dataclasses import dataclass
 
 from pants.base.glob_match_error_behavior import GlobMatchErrorBehavior
+from pants.engine.environment import EnvironmentName
 from pants.engine.fs import (
+    EMPTY_DIGEST,
     CreateDigest,
     Digest,
     DigestEntries,
@@ -19,12 +22,25 @@ from pants.engine.fs import (
 )
 from pants.engine.process import ProcessResult
 from pants.engine.rules import Get, MultiGet, collect_rules, rule
+from pants.engine.unions import UnionRule, union
 from pants.jvm.compile import ClasspathEntry
 from pants.jvm.jdk_rules import InternalJdk, JvmProcess
-from pants.jvm.resolve.common import ArtifactRequirements, Coordinate
 from pants.jvm.resolve.coursier_fetch import ToolClasspath, ToolClasspathRequest
 from pants.jvm.resolve.jvm_tool import GenerateJvmLockfileFromTool
 from pants.util.logging import LogLevel
+
+
+@union(in_scope_types=[EnvironmentName])
+@dataclass(frozen=True)
+class ResolveJvmCompilerRequest(ABC):
+    pass
+
+
+@dataclass(frozen=True)
+class ResolvedJvmCompiler:
+    compiler_main: str
+    classpath_entries: tuple[str, ...]
+    digest: Digest = EMPTY_DIGEST
 
 
 @dataclass(frozen=True)
@@ -33,83 +49,7 @@ class CompileJvmWrappedBinaryRequest:
     sources: Digest
     accepted_file_extensions: tuple[str, ...]
     lockfile_request: GenerateJvmLockfileFromTool
-    compiler_classname: str
-    compiler_requirements: ArtifactRequirements | None
-
-    @classmethod
-    def for_java_sources(
-        cls, *, name: str, sources: Digest, lockfile_request: GenerateJvmLockfileFromTool
-    ) -> CompileJvmWrappedBinaryRequest:
-        return cls(
-            name=name,
-            sources=sources,
-            accepted_file_extensions=(".java",),
-            lockfile_request=lockfile_request,
-            compiler_classname="com.sun.tools.javac.Main",
-            compiler_requirements=None,
-        )
-
-    @classmethod
-    def for_scala_sources(
-        cls,
-        *,
-        name: str,
-        sources: Digest,
-        lockfile_request: GenerateJvmLockfileFromTool,
-        scala_version: str,
-    ) -> CompileJvmWrappedBinaryRequest:
-        return cls(
-            name=name,
-            sources=sources,
-            accepted_file_extensions=(".scala",),
-            lockfile_request=lockfile_request,
-            compiler_classname="scala.tools.nsc.Main",
-            compiler_requirements=ArtifactRequirements.from_coordinates(
-                [
-                    Coordinate(
-                        group="org.scala-lang",
-                        artifact="scala-compiler",
-                        version=scala_version,
-                    ),
-                    Coordinate(
-                        group="org.scala-lang",
-                        artifact="scala-library",
-                        version=scala_version,
-                    ),
-                    Coordinate(
-                        group="org.scala-lang",
-                        artifact="scala-reflect",
-                        version=scala_version,
-                    ),
-                ]
-            ),
-        )
-
-    @classmethod
-    def for_kotlin_sources(
-        cls,
-        *,
-        name: str,
-        sources: Digest,
-        lockfile_request: GenerateJvmLockfileFromTool,
-        kotlin_version: str,
-    ) -> CompileJvmWrappedBinaryRequest:
-        return cls(
-            name=name,
-            sources=sources,
-            accepted_file_extensions=(".kt",),
-            lockfile_request=lockfile_request,
-            compiler_classname="org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
-            compiler_requirements=ArtifactRequirements.from_coordinates(
-                [
-                    Coordinate(
-                        group="org.jetbrains.kotlin",
-                        artifact="kotlin-compiler-embeddable",
-                        version=kotlin_version,
-                    ),
-                ]
-            ),
-        )
+    compiler_request: ResolveJvmCompilerRequest
 
 
 @rule
@@ -118,7 +58,8 @@ async def compile_jvm_wrapped_binary(
 ) -> ClasspathEntry:
     dest_dir = "classfiles"
 
-    materialized_classpath, sources_subset, empty_dest_dir = await MultiGet(
+    resolved_compiler, binary_classpath, sources_subset, empty_dest_dir = await MultiGet(
+        Get(ResolvedJvmCompiler, ResolveJvmCompilerRequest, request.compiler_request),
         Get(
             ToolClasspath,
             ToolClasspathRequest(prefix="__toolcp", lockfile=request.lockfile_request),
@@ -137,21 +78,13 @@ async def compile_jvm_wrapped_binary(
         Get(Digest, CreateDigest([Directory(path=dest_dir)])),
     )
 
-    input_digests = [materialized_classpath.digest, request.sources, empty_dest_dir]
-    if request.compiler_requirements:
-        compiler_classpath = await Get(
-            ToolClasspath,
-            ToolClasspathRequest(
-                prefix="__compilercp", artifact_requirements=request.compiler_requirements
-            ),
-        )
-        compiler_classpath_entries = list(compiler_classpath.classpath_entries())
-        input_digests.append(compiler_classpath.digest)
-    else:
-        compiler_classpath_entries = [f"{jdk.java_home}/lib/tools.jar"]
-
     merged_digest, source_entries = await MultiGet(
-        Get(Digest, MergeDigests(input_digests)),
+        Get(
+            Digest,
+            MergeDigests(
+                [binary_classpath.digest, resolved_compiler.digest, request.sources, empty_dest_dir]
+            ),
+        ),
         Get(DigestEntries, Digest, sources_subset),
     )
 
@@ -159,11 +92,11 @@ async def compile_jvm_wrapped_binary(
         ProcessResult,
         JvmProcess(
             jdk=jdk,
-            classpath_entries=compiler_classpath_entries,
+            classpath_entries=resolved_compiler.classpath_entries,
             argv=[
-                request.compiler_classname,
+                resolved_compiler.compiler_main,
                 "-classpath",
-                ":".join(materialized_classpath.classpath_entries()),
+                ":".join(binary_classpath.classpath_entries()),
                 "-d",
                 dest_dir,
                 *[entry.path for entry in source_entries if isinstance(entry, FileEntry)],
@@ -184,5 +117,34 @@ async def compile_jvm_wrapped_binary(
     )
 
 
+class ResolveJavaCompilerRequest(ResolveJvmCompilerRequest):
+    pass
+
+
+class CompileJavaWrappedBinaryRequest:
+    @staticmethod
+    def create(
+        *, name: str, sources: Digest, lockfile_request: GenerateJvmLockfileFromTool
+    ) -> CompileJvmWrappedBinaryRequest:
+        return CompileJvmWrappedBinaryRequest(
+            name=name,
+            sources=sources,
+            accepted_file_extensions=(".java",),
+            lockfile_request=lockfile_request,
+            compiler_request=ResolveJavaCompilerRequest(),
+        )
+
+
+@rule
+def resolve_java_compiler(_: ResolveJavaCompilerRequest, jdk: InternalJdk) -> ResolvedJvmCompiler:
+    return ResolvedJvmCompiler(
+        compiler_main="com.sun.tools.javac.Main",
+        classpath_entries=(f"{jdk.java_home}/lib/tools.jar",),
+    )
+
+
 def rules():
-    return collect_rules()
+    return [
+        *collect_rules(),
+        UnionRule(ResolveJvmCompilerRequest, ResolveJavaCompilerRequest),
+    ]

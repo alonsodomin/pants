@@ -7,6 +7,8 @@ import os
 from dataclasses import dataclass
 from typing import Any, Iterator
 
+from pants.backend.kotlin.util_rules import wrapped_binaries
+from pants.backend.kotlin.util_rules.wrapped_binaries import CompileKotlinWrappedBinaryRequest
 from pants.core.goals.generate_lockfiles import DEFAULT_TOOL_LOCKFILE, GenerateToolLockfileSentinel
 from pants.core.util_rules.source_files import SourceFiles
 from pants.engine.fs import CreateDigest, DigestContents, FileContent
@@ -15,7 +17,6 @@ from pants.engine.internals.selectors import Get, MultiGet
 from pants.engine.process import FallibleProcessResult, ProcessExecutionFailure
 from pants.engine.rules import collect_rules, rule
 from pants.engine.unions import UnionRule
-from pants.jvm import wrapped_binaries
 from pants.jvm.compile import ClasspathEntry
 from pants.jvm.jdk_rules import InternalJdk, JdkEnvironment, JdkRequest, JvmProcess
 from pants.jvm.resolve.coursier_fetch import ToolClasspath, ToolClasspathRequest
@@ -249,7 +250,7 @@ async def setup_kotlin_parser_classfiles() -> KotlinParserBinary:
     classpath_entry = await Get(
         ClasspathEntry,
         CompileJvmWrappedBinaryRequest,
-        CompileJvmWrappedBinaryRequest.for_kotlin_sources(
+        CompileKotlinWrappedBinaryRequest.create(
             name="kotlin_parser",
             sources=source_digest,
             lockfile_request=parser_lockfile_request,

@@ -10,6 +10,8 @@ from typing import Any, Iterator, Mapping
 
 from pants.backend.scala.subsystems.scala import ScalaSubsystem
 from pants.backend.scala.subsystems.scalac import Scalac
+from pants.backend.scala.util_rules import wrapped_binaries
+from pants.backend.scala.util_rules.wrapped_binaries import CompileScalaWrappedBinaryRequest
 from pants.core.goals.generate_lockfiles import DEFAULT_TOOL_LOCKFILE, GenerateToolLockfileSentinel
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
 from pants.engine.fs import AddPrefix, CreateDigest, Digest, DigestContents, FileContent
@@ -18,7 +20,6 @@ from pants.engine.process import FallibleProcessResult, ProcessExecutionFailure
 from pants.engine.rules import collect_rules, rule
 from pants.engine.target import WrappedTarget, WrappedTargetRequest
 from pants.engine.unions import UnionRule
-from pants.jvm import wrapped_binaries
 from pants.jvm.compile import ClasspathEntry
 from pants.jvm.jdk_rules import InternalJdk, JvmProcess
 from pants.jvm.jdk_rules import rules as jdk_rules
@@ -323,7 +324,7 @@ async def setup_scala_parser_classfiles() -> ScalaParserBinary:
     classpath_entry = await Get(
         ClasspathEntry,
         CompileJvmWrappedBinaryRequest,
-        CompileJvmWrappedBinaryRequest.for_scala_sources(
+        CompileScalaWrappedBinaryRequest.create(
             name="scala_parser",
             sources=source_digest,
             lockfile_request=parser_lockfile_request,

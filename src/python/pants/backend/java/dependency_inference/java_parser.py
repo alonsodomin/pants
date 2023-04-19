@@ -22,7 +22,10 @@ from pants.jvm.compile import ClasspathEntry
 from pants.jvm.jdk_rules import InternalJdk, JvmProcess
 from pants.jvm.resolve.coursier_fetch import ToolClasspath, ToolClasspathRequest
 from pants.jvm.resolve.jvm_tool import GenerateJvmLockfileFromTool, GenerateJvmToolLockfileSentinel
-from pants.jvm.wrapped_binaries import CompileJvmWrappedBinaryRequest
+from pants.jvm.wrapped_binaries import (
+    CompileJavaWrappedBinaryRequest,
+    CompileJvmWrappedBinaryRequest,
+)
 from pants.option.global_options import KeepSandboxes
 from pants.util.logging import LogLevel
 from pants.util.ordered_set import FrozenOrderedSet
@@ -168,7 +171,7 @@ async def build_java_parser() -> JavaParserBinary:
     classpath_entry = await Get(
         ClasspathEntry,
         CompileJvmWrappedBinaryRequest,
-        CompileJvmWrappedBinaryRequest.for_java_sources(
+        CompileJavaWrappedBinaryRequest.create(
             name="java_parser", sources=source_digest, lockfile_request=parser_lockfile_request
         ),
     )
